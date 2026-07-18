@@ -1,0 +1,4 @@
+# Don't accidentally commit real config files
+.config/
+.claude-profiles/
+.claude-provider

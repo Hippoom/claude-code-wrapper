@@ -1,0 +1,282 @@
+#!/bin/zsh
+# cclaude — Per-project Claude Code launcher
+#
+# .claude-provider stores the key name (one line, e.g. "ds-foo").
+# Provider must be specified on every invocation via shortcut or --provider.
+#
+# Usage:
+#   First time:     cclaude --provider ds-pro:ds-foo    (saves "ds-foo")
+#   Later:          cclaude --ds-pro                     (reads key from file)
+#                   cclaude --ds-pro:ds-bar              (switches key)
+#   Force:          cclaude --provider ds-pro:ds-foo     (explicit, saves key)
+#                   cclaude --provider ds-flash:ds-bar   (explicit, saves key)
+#   Other:          cclaude --list / --which / --help
+
+set -e
+
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+
+# ── Config directory resolution ──────────────────────────────────────────
+# Priority: $CCLAUDE_CONFIG_DIR > legacy ~/.claude-profiles > XDG default
+if [[ -n "$CCLAUDE_CONFIG_DIR" ]]; then
+  PROFILES_DIR="${CCLAUDE_CONFIG_DIR}/providers"
+elif [[ -d "${HOME}/.claude-profiles" ]]; then
+  PROFILES_DIR="${HOME}/.claude-profiles"
+else
+  local_xdg="${XDG_CONFIG_HOME:-${HOME}/.config}/cclaude"
+  PROFILES_DIR="${local_xdg}/providers"
+fi
+KEYS_DIR="${PROFILES_DIR}/keys"
+
+# ── Help ───────────────────────────────────────────────────────────────
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  cat <<'EOF'
+cclaude — per-project Claude Code launcher
+
+Usage:
+  First time:   cclaude --provider ds-pro:ds-foo       (saves key to .claude-provider)
+  Later:        cclaude --ds-pro                       (reads key from .claude-provider)
+                cclaude --ds-flash                     (switches provider)
+  Switch key:   cclaude --ds-pro:ds-bar                (switches key)
+  Other:        cclaude --list | --which | --help
+
+Provider shortcuts:  --ds-pro  --ds-flash  --gpt
+
+Config directory (priority):
+  $CCLAUDE_CONFIG_DIR/providers/       # env var override
+  ~/.claude-profiles/                   # legacy (if exists)
+  ~/.config/cclaude/providers/         # XDG default
+
+Key directory:
+  <config>/keys/
+
+All other args are passed through to claude.
+EOF
+  return 0 2>/dev/null || exit 0
+fi
+
+# ── List profiles & keys ───────────────────────────────────────────────
+if [[ "$1" == "--list" ]]; then
+  echo "Providers:"
+  for pf in "${PROFILES_DIR}"/*.sh(N); do
+    local pname="${pf:t:r}"
+    local pdesc=""
+    read -r pdesc < "$pf" 2>/dev/null || true
+    if [[ "$pdesc" == "#"* ]]; then
+      pdesc=" — ${pdesc#\# }"
+    fi
+    printf "  %-20s%s\n" "$pname" "$pdesc"
+  done
+  echo ""
+  echo "Keys:"
+  for kf in "${KEYS_DIR}"/*.sh(N); do
+    local kname="${kf:t:r}"
+    local kdesc=""
+    read -r kdesc < "$kf" 2>/dev/null || true
+    printf "  %-20s — %s\n" "$kname" "${kdesc#\# }"
+  done
+  return 0 2>/dev/null || exit 0
+fi
+
+# ── Parse provider ─────────────────────────────────────────────────────
+PROVIDER=""
+KEYNAME=""
+SAVE_KEY=0
+PROVIDER_ARG_CONSUMED=0
+
+# --provider ds-pro:ds-foo  (full explicit, saves key)
+if [[ "$1" == "--provider" ]]; then
+  if [[ -z "$2" ]]; then
+    echo "cclaude: --provider requires <provider>:<key>" >&2
+    echo "  e.g. cclaude --provider ds-pro:ds-default" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+  SPEC="$2"
+  if [[ "$SPEC" != *:* ]]; then
+    echo "cclaude: Invalid format: '${SPEC}'" >&2
+    echo "  Expected: provider:keyname  (e.g. ds-pro:ds-default)" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+  PROVIDER="${SPEC%%:*}"
+  KEYNAME="${SPEC##*:}"
+  if [[ -z "$PROVIDER" || -z "$KEYNAME" ]]; then
+    echo "cclaude: Invalid format: '${SPEC}'" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+  SAVE_KEY=1
+  shift 2
+  PROVIDER_ARG_CONSUMED=1
+fi
+
+# --ds-pro / --ds-flash / --gpt  (shortcuts, optional inline key)
+if [[ "$PROVIDER_ARG_CONSUMED" -eq 0 ]]; then
+  case "$1" in
+    --ds-pro)
+      PROVIDER="ds-pro"
+      shift
+      PROVIDER_ARG_CONSUMED=1
+      ;;
+    --ds-pro:*)
+      PROVIDER="ds-pro"
+      KEYNAME="${1#*:}"
+      SAVE_KEY=1
+      shift
+      PROVIDER_ARG_CONSUMED=1
+      ;;
+    --ds-flash)
+      PROVIDER="ds-flash"
+      shift
+      PROVIDER_ARG_CONSUMED=1
+      ;;
+    --ds-flash:*)
+      PROVIDER="ds-flash"
+      KEYNAME="${1#*:}"
+      SAVE_KEY=1
+      shift
+      PROVIDER_ARG_CONSUMED=1
+      ;;
+    --gpt)
+      PROVIDER="gpt"
+      shift
+      PROVIDER_ARG_CONSUMED=1
+      ;;
+    --gpt:*)
+      PROVIDER="gpt"
+      KEYNAME="${1#*:}"
+      SAVE_KEY=1
+      shift
+      PROVIDER_ARG_CONSUMED=1
+      ;;
+  esac
+fi
+
+# ── Resolve key from file ──────────────────────────────────────────────
+if [[ -z "$KEYNAME" ]]; then
+  local dir="$PWD"
+  while true; do
+    if [[ -f "${dir}/.claude-provider" ]]; then
+      while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line## }"
+        line="${line%% }"
+        if [[ -n "$line" ]]; then
+          KEYNAME="$line"
+          break
+        fi
+      done < "${dir}/.claude-provider"
+      if [[ -n "$KEYNAME" ]]; then
+        break
+      fi
+    fi
+    if [[ "$dir" == "/" ]]; then
+      break
+    fi
+    dir="${dir:h}"
+  done
+fi
+
+# ── Which mode (resolve early so we can show partial info) ─────────────
+if [[ "$1" == "--which" ]]; then
+  WHICH_MODE=1
+  shift
+fi
+
+# If --which and no provider: show what we know, don't error
+if [[ -n "$WHICH_MODE" && -z "$PROVIDER" ]]; then
+  if [[ -n "$KEYNAME" ]]; then
+    echo "Key:      ${KEYNAME}  (from .claude-provider)"
+    echo "Provider: <not specified>"
+    echo ""
+    echo "Specify a provider to see the full resolved config:"
+    echo "  cclaude --ds-pro --which"
+    echo "  cclaude --ds-flash --which"
+    echo "  cclaude --gpt --which"
+  else
+    echo "Key:      <not configured>"
+    echo "Provider: <not specified>"
+    echo ""
+    echo "No .claude-provider found. Set up this project first:"
+    echo "  cclaude --provider ds-pro:<keyname>"
+    echo "  Available keys: cclaude --list"
+  fi
+  return 0 2>/dev/null || exit 0
+fi
+
+# Must have a provider (for launch or full --which)
+if [[ -z "$PROVIDER" ]]; then
+  echo "cclaude: Must specify a provider." >&2
+  echo "  Shortcuts:  --ds-pro   --ds-flash   --gpt" >&2
+  echo "  Full:       --provider ds-pro:ds-default" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+# Must have a key
+if [[ -z "$KEYNAME" ]]; then
+  echo "cclaude: No key found." >&2
+  echo "  Specify one:  cclaude --provider ${PROVIDER}:<keyname>" >&2
+  echo "  Or:           cclaude --${PROVIDER}:<keyname>" >&2
+  echo "  Available:    cclaude --list" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+# ── Save key if explicitly specified ───────────────────────────────────
+if [[ "$SAVE_KEY" -eq 1 ]]; then
+  echo "${KEYNAME}" > "${PWD}/.claude-provider"
+  chmod 644 "${PWD}/.claude-provider" 2>/dev/null || true
+fi
+
+# ── Validate files ─────────────────────────────────────────────────────
+PROFILE_FILE="${PROFILES_DIR}/${PROVIDER}.sh"
+if [[ ! -f "$PROFILE_FILE" ]]; then
+  echo "cclaude: Provider '${PROVIDER}' not found at ${PROFILE_FILE}" >&2
+  echo "  Use --list to see available providers" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+KEY_FILE="${KEYS_DIR}/${KEYNAME}.sh"
+if [[ ! -f "$KEY_FILE" ]]; then
+  echo "cclaude: Key '${KEYNAME}' not found at ${KEY_FILE}" >&2
+  echo "  Use --list to see available keys" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+# ── Clear old env, load new ────────────────────────────────────────────
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
+      ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL \
+      ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL \
+      ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_REASONING_MODEL
+
+# Warn if config files are world-readable (potential secret exposure)
+if [[ -n "$(find "$PROFILE_FILE" "$KEY_FILE" -perm /o+r 2>/dev/null)" ]]; then
+  echo "cclaude: Warning — config files are world-readable:" >&2
+  ls -la "$PROFILE_FILE" "$KEY_FILE" 2>/dev/null | sed 's/^/  /' >&2
+  echo "  Consider: chmod 600 $PROFILE_FILE $KEY_FILE" >&2
+fi
+
+source "$PROFILE_FILE"
+source "$KEY_FILE"
+
+# ── Which mode output ──────────────────────────────────────────────────
+if [[ -n "$WHICH_MODE" ]]; then
+  echo "Provider: ${PROVIDER}  → ${PROFILE_FILE}"
+  echo "Key:      ${KEYNAME}  → ${KEY_FILE}"
+  echo ""
+  echo "Env vars:"
+  for var in ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN \
+             ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL \
+             ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL \
+             ANTHROPIC_REASONING_MODEL; do
+    if [[ -n "${(P)var}" ]]; then
+      printf "  %-35s = " "$var"
+      if [[ "$var" == *"TOKEN"* || "$var" == *"KEY"* ]]; then
+        echo "${(P)var:0:12}..."
+      else
+        echo "${(P)var}"
+      fi
+    fi
+  done
+  return 0 2>/dev/null || exit 0
+fi
+
+# ── Launch ─────────────────────────────────────────────────────────────
+exec "$CLAUDE_BIN" "$@"
