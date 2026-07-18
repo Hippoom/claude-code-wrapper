@@ -19,14 +19,16 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 # ── Config directory resolution ──────────────────────────────────────────
 # Priority: $CCLAUDE_CONFIG_DIR > legacy ~/.claude-profiles > XDG default
 if [[ -n "$CCLAUDE_CONFIG_DIR" ]]; then
-  PROFILES_DIR="${CCLAUDE_CONFIG_DIR}/providers"
+  CONFIG_DIR="${CCLAUDE_CONFIG_DIR}"
+  PROFILES_DIR="${CONFIG_DIR}/providers"
 elif [[ -d "${HOME}/.claude-profiles" ]]; then
-  PROFILES_DIR="${HOME}/.claude-profiles"
+  CONFIG_DIR="${HOME}/.claude-profiles"
+  PROFILES_DIR="${CONFIG_DIR}"
 else
-  local_xdg="${XDG_CONFIG_HOME:-${HOME}/.config}/cclaude"
-  PROFILES_DIR="${local_xdg}/providers"
+  CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/cclaude"
+  PROFILES_DIR="${CONFIG_DIR}/providers"
 fi
-KEYS_DIR="${PROFILES_DIR}/keys"
+KEYS_DIR="${CONFIG_DIR}/keys"
 
 # ── Help ───────────────────────────────────────────────────────────────
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
