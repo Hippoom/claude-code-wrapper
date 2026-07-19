@@ -258,6 +258,21 @@ fi
 source "$PROFILE_FILE"
 source "$KEY_FILE"
 
+# ── Auto-detect --bare requirement ──────────────────────────────────────
+# Non-Anthropic providers need --bare to skip OAuth login flow.
+# Detect this by checking if ANTHROPIC_BASE_URL points away from Anthropic.
+NEED_BARE=0
+if [[ -n "$ANTHROPIC_BASE_URL" ]]; then
+  case "$ANTHROPIC_BASE_URL" in
+    https://api.anthropic.com|https://api.anthropic.com/*)
+      # Official Anthropic endpoint — no --bare needed
+      ;;
+    *)
+      NEED_BARE=1
+      ;;
+  esac
+fi
+
 # ── Which mode output ──────────────────────────────────────────────────
 if [[ -n "$WHICH_MODE" ]]; then
   echo "Provider: ${PROVIDER}  → ${PROFILE_FILE}"
@@ -277,8 +292,26 @@ if [[ -n "$WHICH_MODE" ]]; then
       fi
     fi
   done
+  if [[ "$NEED_BARE" -eq 1 ]]; then
+    echo ""
+    echo "Note: Non-Anthropic endpoint detected — --bare mode will be auto-applied."
+  fi
   return 0 2>/dev/null || exit 0
 fi
 
 # ── Launch ─────────────────────────────────────────────────────────────
+if [[ "$NEED_BARE" -eq 1 ]]; then
+  # Check if --bare is already in the args
+  local has_bare=0
+  for arg in "$@"; do
+    if [[ "$arg" == "--bare" ]]; then
+      has_bare=1
+      break
+    fi
+  done
+  if [[ "$has_bare" -eq 0 ]]; then
+    export CLAUDE_CODE_SIMPLE=1
+  fi
+fi
+
 exec "$CLAUDE_BIN" "$@"
