@@ -2,3 +2,6 @@
 .config/
 .claude-profiles/
 .claude-provider
+
+# macOS
+.DS_Store
