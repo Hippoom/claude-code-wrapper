@@ -2,14 +2,14 @@
 # cclaude — Per-project Claude Code launcher
 #
 # .claude-provider stores the key name (one line, e.g. "ds-foo").
-# Provider must be specified on every invocation via shortcut or --provider.
+# Provider files define endpoints and model-tier mappings. Any provider file
+# <name>.sh can be selected with --<name> or --<name>:<key>.
 #
 # Usage:
-#   First time:     cclaude --provider ds-pro:ds-foo    (saves "ds-foo")
-#   Later:          cclaude --ds-pro                     (reads key from file)
-#                   cclaude --ds-pro:ds-bar              (switches key)
-#   Force:          cclaude --provider ds-pro:ds-foo     (explicit, saves key)
-#                   cclaude --provider ds-flash:ds-bar   (explicit, saves key)
+#   First time:     cclaude --provider ds:ds-foo         (saves "ds-foo")
+#   Later:          cclaude --ds                         (reads key from file)
+#                   cclaude --ds:ds-bar                  (switches key)
+#   Model tier:     cclaude --ds --model haiku
 #   Other:          cclaude --list / --which / --help
 
 set -e
@@ -36,13 +36,27 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
 cclaude — per-project Claude Code launcher
 
 Usage:
-  First time:   cclaude --provider ds-pro:ds-foo       (saves key to .claude-provider)
-  Later:        cclaude --ds-pro                       (reads key from .claude-provider)
-                cclaude --ds-flash                     (switches provider)
-  Switch key:   cclaude --ds-pro:ds-bar                (switches key)
-  Other:        cclaude --list | --which | --help
+  First time:   cclaude --provider ds:ds-foo           (saves key to .claude-provider)
+  Later:        cclaude --ds                           (reads key from .claude-provider)
+  Switch key:   cclaude --ds:ds-bar                    (switches key)
+  Model tier:   cclaude --ds --model haiku|sonnet|opus
+  Compatibility: cclaude --ds --simple                 (custom-provider fallback)
+  Other:         cclaude --list | --which | --help
 
-Provider shortcuts:  --ds-pro  --ds-flash  --gpt
+Provider shortcuts are generated from provider files:
+  --<provider>  --<provider>:<key>
+
+All remaining arguments, including --model, are passed to Claude Code.
+
+Local Skills, plugins, hooks, and other Claude Code customizations load by
+default. For a custom-provider compatibility fallback:
+  --simple                             Set CLAUDE_CODE_SIMPLE=1
+  CCLAUDE_SIMPLE=1                     Same opt-in via environment variable
+
+Simple mode is a reduced-initialization fallback that can suppress local
+customizations, including Skills. The wrapper consumes --simple and does not
+forward it to Claude Code. For compatibility, --full-skills and
+CCLAUDE_FULL_SKILLS=1 are accepted as no-op aliases for the default behavior.
 
 Config directory (priority):
   $CCLAUDE_CONFIG_DIR/providers/       # env var override
@@ -86,17 +100,17 @@ KEYNAME=""
 SAVE_KEY=0
 PROVIDER_ARG_CONSUMED=0
 
-# --provider ds-pro:ds-foo  (full explicit, saves key)
+# --provider ds:ds-foo  (full explicit, saves key)
 if [[ "$1" == "--provider" ]]; then
   if [[ -z "$2" ]]; then
     echo "cclaude: --provider requires <provider>:<key>" >&2
-    echo "  e.g. cclaude --provider ds-pro:ds-default" >&2
+    echo "  e.g. cclaude --provider ds:ds-default" >&2
     return 1 2>/dev/null || exit 1
   fi
   SPEC="$2"
   if [[ "$SPEC" != *:* ]]; then
     echo "cclaude: Invalid format: '${SPEC}'" >&2
-    echo "  Expected: provider:keyname  (e.g. ds-pro:ds-default)" >&2
+    echo "  Expected: provider:keyname  (e.g. ds:ds-default)" >&2
     return 1 2>/dev/null || exit 1
   fi
   PROVIDER="${SPEC%%:*}"
@@ -110,46 +124,53 @@ if [[ "$1" == "--provider" ]]; then
   PROVIDER_ARG_CONSUMED=1
 fi
 
-# --ds-pro / --ds-flash / --gpt  (shortcuts, optional inline key)
-if [[ "$PROVIDER_ARG_CONSUMED" -eq 0 ]]; then
-  case "$1" in
-    --ds-pro)
-      PROVIDER="ds-pro"
-      shift
-      PROVIDER_ARG_CONSUMED=1
-      ;;
-    --ds-pro:*)
-      PROVIDER="ds-pro"
-      KEYNAME="${1#*:}"
+# --<provider> / --<provider>:<key> (dynamic shortcuts from provider files)
+if [[ "$PROVIDER_ARG_CONSUMED" -eq 0 && "$1" == --* ]]; then
+  SHORTCUT="${1#--}"
+  if [[ "$SHORTCUT" == *:* ]]; then
+    CANDIDATE_PROVIDER="${SHORTCUT%%:*}"
+    CANDIDATE_KEY="${SHORTCUT#*:}"
+  else
+    CANDIDATE_PROVIDER="$SHORTCUT"
+    CANDIDATE_KEY=""
+  fi
+
+  if [[ -n "$CANDIDATE_PROVIDER" && -f "${PROFILES_DIR}/${CANDIDATE_PROVIDER}.sh" ]]; then
+    if [[ "$SHORTCUT" == *:* && -z "$CANDIDATE_KEY" ]]; then
+      echo "cclaude: Key name cannot be empty in '${1}'" >&2
+      return 1 2>/dev/null || exit 1
+    fi
+    PROVIDER="$CANDIDATE_PROVIDER"
+    if [[ -n "$CANDIDATE_KEY" ]]; then
+      KEYNAME="$CANDIDATE_KEY"
       SAVE_KEY=1
-      shift
-      PROVIDER_ARG_CONSUMED=1
-      ;;
-    --ds-flash)
-      PROVIDER="ds-flash"
-      shift
-      PROVIDER_ARG_CONSUMED=1
-      ;;
-    --ds-flash:*)
-      PROVIDER="ds-flash"
-      KEYNAME="${1#*:}"
-      SAVE_KEY=1
-      shift
-      PROVIDER_ARG_CONSUMED=1
-      ;;
-    --gpt)
-      PROVIDER="gpt"
-      shift
-      PROVIDER_ARG_CONSUMED=1
-      ;;
-    --gpt:*)
-      PROVIDER="gpt"
-      KEYNAME="${1#*:}"
-      SAVE_KEY=1
-      shift
-      PROVIDER_ARG_CONSUMED=1
-      ;;
-  esac
+    fi
+    shift
+    PROVIDER_ARG_CONSUMED=1
+  fi
+fi
+
+# ── Parse wrapper-only options ─────────────────────────────────────────
+# Full Claude Code initialization—including local Skills—is the default.
+# --simple is an explicit custom-provider compatibility fallback. Consume both
+# wrapper-private flags so neither is passed through to Claude Code.
+SIMPLE_MODE="${CCLAUDE_SIMPLE:-0}"
+if [[ "$#" -gt 0 ]]; then
+  local -a CLAUDE_ARGS=()
+  for arg in "$@"; do
+    case "$arg" in
+      --simple)
+        SIMPLE_MODE=1
+        ;;
+      --full-skills)
+        # Legacy experimental opt-in. Full Skills is now the default.
+        ;;
+      *)
+        CLAUDE_ARGS+=("$arg")
+        ;;
+    esac
+  done
+  set -- "${CLAUDE_ARGS[@]}"
 fi
 
 # ── Resolve key from file ──────────────────────────────────────────────
@@ -190,15 +211,14 @@ if [[ -n "$WHICH_MODE" && -z "$PROVIDER" ]]; then
     echo "Provider: <not specified>"
     echo ""
     echo "Specify a provider to see the full resolved config:"
-    echo "  cclaude --ds-pro --which"
-    echo "  cclaude --ds-flash --which"
+    echo "  cclaude --ds --which"
     echo "  cclaude --gpt --which"
   else
     echo "Key:      <not configured>"
     echo "Provider: <not specified>"
     echo ""
     echo "No .claude-provider found. Set up this project first:"
-    echo "  cclaude --provider ds-pro:<keyname>"
+    echo "  cclaude --provider ds:<keyname>"
     echo "  Available keys: cclaude --list"
   fi
   return 0 2>/dev/null || exit 0
@@ -207,8 +227,8 @@ fi
 # Must have a provider (for launch or full --which)
 if [[ -z "$PROVIDER" ]]; then
   echo "cclaude: Must specify a provider." >&2
-  echo "  Shortcuts:  --ds-pro   --ds-flash   --gpt" >&2
-  echo "  Full:       --provider ds-pro:ds-default" >&2
+  echo "  Shortcuts:  --<provider>  (run --list to see available providers)" >&2
+  echo "  Full:       --provider ds:ds-default" >&2
   return 1 2>/dev/null || exit 1
 fi
 
@@ -294,24 +314,25 @@ if [[ -n "$WHICH_MODE" ]]; then
   done
   if [[ "$NEED_BARE" -eq 1 ]]; then
     echo ""
-    echo "Note: Non-Anthropic endpoint detected — --bare mode will be auto-applied."
+    if [[ "$SIMPLE_MODE" == "1" ]]; then
+      echo "Note: Custom-provider compatibility mode enabled — CLAUDE_CODE_SIMPLE=1."
+      echo "      Local Skills and other customizations may be unavailable."
+    else
+      echo "Note: Full Claude Code initialization enabled, including local Skills."
+      echo "      Use --simple or CCLAUDE_SIMPLE=1 for the compatibility fallback."
+    fi
   fi
   return 0 2>/dev/null || exit 0
 fi
 
 # ── Launch ─────────────────────────────────────────────────────────────
-if [[ "$NEED_BARE" -eq 1 ]]; then
-  # Check if --bare is already in the args
-  local has_bare=0
-  for arg in "$@"; do
-    if [[ "$arg" == "--bare" ]]; then
-      has_bare=1
-      break
-    fi
-  done
-  if [[ "$has_bare" -eq 0 ]]; then
-    export CLAUDE_CODE_SIMPLE=1
-  fi
+if [[ "$SIMPLE_MODE" == "1" ]]; then
+  # Explicit fallback for custom providers that require reduced initialization.
+  export CLAUDE_CODE_SIMPLE=1
+else
+  # Do not inherit simple mode from a parent Claude Code process: the default
+  # must load the caller's complete local Claude Code environment and Skills.
+  unset CLAUDE_CODE_SIMPLE
 fi
 
 exec "$CLAUDE_BIN" "$@"
