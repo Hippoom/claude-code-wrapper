@@ -1,7 +1,8 @@
 # Don't accidentally commit real config files
 .config/
+# Old credential directory remains ignored but CCW does not read it.
 .claude-profiles/
-.claude-provider
+.ccw
 
 # macOS
 .DS_Store

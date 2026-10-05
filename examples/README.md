@@ -1,28 +1,26 @@
 # Example Configurations
 
-Copy these files to your config directory and edit them with your own settings.
+Copy the provider and key examples into your CCW config directory, then replace placeholders with your own settings.
 
 ## Quick Start
 
 ```bash
-# Create config directory
-mkdir -p ~/.config/cclaude/providers ~/.config/cclaude/keys
+mkdir -p ~/.config/ccw/providers ~/.config/ccw/keys
 
-# Add a provider (e.g. DeepSeek)
-cp ds.example.sh ~/.config/cclaude/providers/ds.sh
+cp ds.example.sh ~/.config/ccw/providers/ds.sh
+cp ds-default-key.example.sh ~/.config/ccw/keys/ds-default.sh
+chmod 600 ~/.config/ccw/keys/*.sh
 
-# Add an API key
-cp ds-default-key.example.sh ~/.config/cclaude/keys/ds-default.sh
-
-# Make sure permissions are secure
-chmod 600 ~/.config/cclaude/keys/*.sh
-
-# Edit the files with your real API key and model names
-vim ~/.config/cclaude/providers/ds.sh
-vim ~/.config/cclaude/keys/ds-default.sh
+# Edit provider settings and add your real API key locally.
+$EDITOR ~/.config/ccw/providers/ds.sh
+$EDITOR ~/.config/ccw/keys/ds-default.sh
 ```
+
+In your project directory, run `ccw --provider ds:ds-default` once to create the `.ccw` selection marker. Later, `ccw --ds` reads that key name. The installer also places the `claude-wrapper` and `claude-code-wrapper` command aliases beside `ccw`.
 
 ## File Naming
 
-- **Provider files**: `<name>.sh` — the name becomes the provider shortcut (e.g. `--ds`)
-- **Key files**: `<name>.sh` — the name is referenced via `.claude-provider` or `--provider` flag
+- **Provider files:** `<name>.sh`; the name becomes the provider shortcut (for example, `--ds`).
+- **Key files:** `<name>.sh`; the stem is referenced via `.ccw` or `--provider <provider>:<key>`.
+
+Use the documented XDG root `${XDG_CONFIG_HOME:-~/.config}/ccw`, or set `CCW_CONFIG_DIR` to a custom config root. Keep real provider credentials out of version control.

@@ -1,47 +1,43 @@
 #!/bin/zsh
-# cclaude — Per-project Claude Code launcher
+# CCW — Claude Code Wrapper
 #
-# .claude-provider stores the key name (one line, e.g. "ds-foo").
+# .ccw stores the selected key name (one line, e.g. "ds-foo").
 # Provider files define endpoints and model-tier mappings. Any provider file
 # <name>.sh can be selected with --<name> or --<name>:<key>.
 #
 # Usage:
-#   First time:     cclaude --provider ds:ds-foo         (saves "ds-foo")
-#   Later:          cclaude --ds                         (reads key from file)
-#                   cclaude --ds:ds-bar                  (switches key)
-#   Model tier:     cclaude --ds --model haiku
-#   Other:          cclaude --list / --which / --help
+#   First time:     ccw --provider ds:ds-foo         (saves "ds-foo")
+#   Later:          ccw --ds                         (reads key from file)
+#                   ccw --ds:ds-bar                  (switches key)
+#   Model tier:     ccw --ds --model haiku
+#   Other:          ccw --list / --which / --help
 
 set -e
 
-CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+CCW_CLAUDE_BIN="${CCW_CLAUDE_BIN:-claude}"
 
 # ── Config directory resolution ──────────────────────────────────────────
-# Priority: $CCLAUDE_CONFIG_DIR > legacy ~/.claude-profiles > XDG default
-if [[ -n "$CCLAUDE_CONFIG_DIR" ]]; then
-  CONFIG_DIR="${CCLAUDE_CONFIG_DIR}"
-  PROFILES_DIR="${CONFIG_DIR}/providers"
-elif [[ -d "${HOME}/.claude-profiles" ]]; then
-  CONFIG_DIR="${HOME}/.claude-profiles"
-  PROFILES_DIR="${CONFIG_DIR}"
+# Priority: $CCW_CONFIG_DIR > XDG default
+if [[ -n "$CCW_CONFIG_DIR" ]]; then
+  CONFIG_DIR="${CCW_CONFIG_DIR}"
 else
-  CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/cclaude"
-  PROFILES_DIR="${CONFIG_DIR}/providers"
+  CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/ccw"
 fi
+PROFILES_DIR="${CONFIG_DIR}/providers"
 KEYS_DIR="${CONFIG_DIR}/keys"
 
 # ── Help ───────────────────────────────────────────────────────────────
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   cat <<'EOF'
-cclaude — per-project Claude Code launcher
+CCW (Claude Code Wrapper) — per-project launcher
 
 Usage:
-  First time:   cclaude --provider ds:ds-foo           (saves key to .claude-provider)
-  Later:        cclaude --ds                           (reads key from .claude-provider)
-  Switch key:   cclaude --ds:ds-bar                    (switches key)
-  Model tier:   cclaude --ds --model haiku|sonnet|opus
-  Compatibility: cclaude --ds --simple                 (custom-provider fallback)
-  Other:         cclaude --list | --which | --help
+  First time:   ccw --provider ds:ds-foo           (saves key to .ccw)
+  Later:        ccw --ds                           (reads key from .ccw)
+  Switch key:   ccw --ds:ds-bar                    (switches key)
+  Model tier:   ccw --ds --model haiku|sonnet|opus
+  Compatibility: ccw --ds --simple                 (custom-provider fallback)
+  Other:         ccw --list | --which | --help
 
 Provider shortcuts are generated from provider files:
   --<provider>  --<provider>:<key>
@@ -50,18 +46,17 @@ All remaining arguments, including --model, are passed to Claude Code.
 
 Local Skills, plugins, hooks, and other Claude Code customizations load by
 default. For a custom-provider compatibility fallback:
-  --simple                             Set CLAUDE_CODE_SIMPLE=1
-  CCLAUDE_SIMPLE=1                     Same opt-in via environment variable
+  --simple                   Set CLAUDE_CODE_SIMPLE=1
+  CCW_SIMPLE=1               Same opt-in via environment variable
 
 Simple mode is a reduced-initialization fallback that can suppress local
 customizations, including Skills. The wrapper consumes --simple and does not
-forward it to Claude Code. For compatibility, --full-skills and
-CCLAUDE_FULL_SKILLS=1 are accepted as no-op aliases for the default behavior.
+forward it to Claude Code. Full Skills load by default; --full-skills has been
+removed, and the old CCLAUDE_FULL_SKILLS setting is not supported.
 
-Config directory (priority):
-  $CCLAUDE_CONFIG_DIR/providers/       # env var override
-  ~/.claude-profiles/                   # legacy (if exists)
-  ~/.config/cclaude/providers/         # XDG default
+Config directory:
+  $CCW_CONFIG_DIR/providers/       # optional override
+  ~/.config/ccw/providers/         # XDG default
 
 Key directory:
   <config>/keys/
@@ -103,20 +98,20 @@ PROVIDER_ARG_CONSUMED=0
 # --provider ds:ds-foo  (full explicit, saves key)
 if [[ "$1" == "--provider" ]]; then
   if [[ -z "$2" ]]; then
-    echo "cclaude: --provider requires <provider>:<key>" >&2
-    echo "  e.g. cclaude --provider ds:ds-default" >&2
+    echo "ccw: --provider requires <provider>:<key>" >&2
+    echo "  e.g. ccw --provider ds:ds-default" >&2
     return 1 2>/dev/null || exit 1
   fi
   SPEC="$2"
   if [[ "$SPEC" != *:* ]]; then
-    echo "cclaude: Invalid format: '${SPEC}'" >&2
+    echo "ccw: Invalid format: '${SPEC}'" >&2
     echo "  Expected: provider:keyname  (e.g. ds:ds-default)" >&2
     return 1 2>/dev/null || exit 1
   fi
   PROVIDER="${SPEC%%:*}"
   KEYNAME="${SPEC##*:}"
   if [[ -z "$PROVIDER" || -z "$KEYNAME" ]]; then
-    echo "cclaude: Invalid format: '${SPEC}'" >&2
+    echo "ccw: Invalid format: '${SPEC}'" >&2
     return 1 2>/dev/null || exit 1
   fi
   SAVE_KEY=1
@@ -137,7 +132,7 @@ if [[ "$PROVIDER_ARG_CONSUMED" -eq 0 && "$1" == --* ]]; then
 
   if [[ -n "$CANDIDATE_PROVIDER" && -f "${PROFILES_DIR}/${CANDIDATE_PROVIDER}.sh" ]]; then
     if [[ "$SHORTCUT" == *:* && -z "$CANDIDATE_KEY" ]]; then
-      echo "cclaude: Key name cannot be empty in '${1}'" >&2
+      echo "ccw: Key name cannot be empty in '${1}'" >&2
       return 1 2>/dev/null || exit 1
     fi
     PROVIDER="$CANDIDATE_PROVIDER"
@@ -152,9 +147,9 @@ fi
 
 # ── Parse wrapper-only options ─────────────────────────────────────────
 # Full Claude Code initialization—including local Skills—is the default.
-# --simple is an explicit custom-provider compatibility fallback. Consume both
-# wrapper-private flags so neither is passed through to Claude Code.
-SIMPLE_MODE="${CCLAUDE_SIMPLE:-0}"
+# --simple is an explicit custom-provider compatibility fallback. Consume it
+# before forwarding the remaining arguments to Claude Code.
+SIMPLE_MODE="${CCW_SIMPLE:-0}"
 if [[ "$#" -gt 0 ]]; then
   local -a CLAUDE_ARGS=()
   for arg in "$@"; do
@@ -163,7 +158,8 @@ if [[ "$#" -gt 0 ]]; then
         SIMPLE_MODE=1
         ;;
       --full-skills)
-        # Legacy experimental opt-in. Full Skills is now the default.
+        echo "ccw: --full-skills has been removed; full Skills already load by default." >&2
+        return 2 2>/dev/null || exit 2
         ;;
       *)
         CLAUDE_ARGS+=("$arg")
@@ -177,7 +173,7 @@ fi
 if [[ -z "$KEYNAME" ]]; then
   local dir="$PWD"
   while true; do
-    if [[ -f "${dir}/.claude-provider" ]]; then
+    if [[ -f "${dir}/.ccw" ]]; then
       while IFS= read -r line; do
         line="${line%%#*}"
         line="${line## }"
@@ -186,7 +182,7 @@ if [[ -z "$KEYNAME" ]]; then
           KEYNAME="$line"
           break
         fi
-      done < "${dir}/.claude-provider"
+      done < "${dir}/.ccw"
       if [[ -n "$KEYNAME" ]]; then
         break
       fi
@@ -207,26 +203,26 @@ fi
 # If --which and no provider: show what we know, don't error
 if [[ -n "$WHICH_MODE" && -z "$PROVIDER" ]]; then
   if [[ -n "$KEYNAME" ]]; then
-    echo "Key:      ${KEYNAME}  (from .claude-provider)"
+    echo "Key:      ${KEYNAME}  (from .ccw)"
     echo "Provider: <not specified>"
     echo ""
     echo "Specify a provider to see the full resolved config:"
-    echo "  cclaude --ds --which"
-    echo "  cclaude --gpt --which"
+    echo "  ccw --ds --which"
+    echo "  ccw --gpt --which"
   else
     echo "Key:      <not configured>"
     echo "Provider: <not specified>"
     echo ""
-    echo "No .claude-provider found. Set up this project first:"
-    echo "  cclaude --provider ds:<keyname>"
-    echo "  Available keys: cclaude --list"
+    echo "No .ccw found. Set up this project first:"
+    echo "  ccw --provider ds:<keyname>"
+    echo "  Available keys: ccw --list"
   fi
   return 0 2>/dev/null || exit 0
 fi
 
 # Must have a provider (for launch or full --which)
 if [[ -z "$PROVIDER" ]]; then
-  echo "cclaude: Must specify a provider." >&2
+  echo "ccw: Must specify a provider." >&2
   echo "  Shortcuts:  --<provider>  (run --list to see available providers)" >&2
   echo "  Full:       --provider ds:ds-default" >&2
   return 1 2>/dev/null || exit 1
@@ -234,30 +230,30 @@ fi
 
 # Must have a key
 if [[ -z "$KEYNAME" ]]; then
-  echo "cclaude: No key found." >&2
-  echo "  Specify one:  cclaude --provider ${PROVIDER}:<keyname>" >&2
-  echo "  Or:           cclaude --${PROVIDER}:<keyname>" >&2
-  echo "  Available:    cclaude --list" >&2
+  echo "ccw: No key found." >&2
+  echo "  Specify one:  ccw --provider ${PROVIDER}:<keyname>" >&2
+  echo "  Or:           ccw --${PROVIDER}:<keyname>" >&2
+  echo "  Available:    ccw --list" >&2
   return 1 2>/dev/null || exit 1
 fi
 
 # ── Save key if explicitly specified ───────────────────────────────────
 if [[ "$SAVE_KEY" -eq 1 ]]; then
-  echo "${KEYNAME}" > "${PWD}/.claude-provider"
-  chmod 644 "${PWD}/.claude-provider" 2>/dev/null || true
+  echo "${KEYNAME}" > "${PWD}/.ccw"
+  chmod 644 "${PWD}/.ccw" 2>/dev/null || true
 fi
 
 # ── Validate files ─────────────────────────────────────────────────────
 PROFILE_FILE="${PROFILES_DIR}/${PROVIDER}.sh"
 if [[ ! -f "$PROFILE_FILE" ]]; then
-  echo "cclaude: Provider '${PROVIDER}' not found at ${PROFILE_FILE}" >&2
+  echo "ccw: Provider '${PROVIDER}' not found at ${PROFILE_FILE}" >&2
   echo "  Use --list to see available providers" >&2
   return 1 2>/dev/null || exit 1
 fi
 
 KEY_FILE="${KEYS_DIR}/${KEYNAME}.sh"
 if [[ ! -f "$KEY_FILE" ]]; then
-  echo "cclaude: Key '${KEYNAME}' not found at ${KEY_FILE}" >&2
+  echo "ccw: Key '${KEYNAME}' not found at ${KEY_FILE}" >&2
   echo "  Use --list to see available keys" >&2
   return 1 2>/dev/null || exit 1
 fi
@@ -270,7 +266,7 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
 
 # Warn if config files are world-readable (potential secret exposure)
 if [[ -n "$(find "$PROFILE_FILE" "$KEY_FILE" -perm /o+r 2>/dev/null)" ]]; then
-  echo "cclaude: Warning — config files are world-readable:" >&2
+  echo "ccw: Warning — config files are world-readable:" >&2
   ls -la "$PROFILE_FILE" "$KEY_FILE" 2>/dev/null | sed 's/^/  /' >&2
   echo "  Consider: chmod 600 $PROFILE_FILE $KEY_FILE" >&2
 fi
@@ -319,7 +315,7 @@ if [[ -n "$WHICH_MODE" ]]; then
       echo "      Local Skills and other customizations may be unavailable."
     else
       echo "Note: Full Claude Code initialization enabled, including local Skills."
-      echo "      Use --simple or CCLAUDE_SIMPLE=1 for the compatibility fallback."
+      echo "      Use --simple or CCW_SIMPLE=1 for the compatibility fallback."
     fi
   fi
   return 0 2>/dev/null || exit 0
@@ -335,4 +331,4 @@ else
   unset CLAUDE_CODE_SIMPLE
 fi
 
-exec "$CLAUDE_BIN" "$@"
+exec "$CCW_CLAUDE_BIN" "$@"
