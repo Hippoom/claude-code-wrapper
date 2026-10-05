@@ -17,7 +17,7 @@ cd claude-code-wrapper
 ./install.sh
 ```
 
-The installer copies the `ccw` launcher and creates the `claude-wrapper` and `claude-code-wrapper` symlink aliases in `~/bin`. Pass a destination directory to override it, for example `./install.sh "$HOME/.local/bin"`. Add the chosen directory to `PATH` if needed. You need `zsh` and the Claude Code CLI (`claude`) in your `PATH`.
+The installer copies the `ccw` launcher and creates the `claude-wrapper` and `claude-code-wrapper` symlink aliases in `~/bin`. It also creates `providers/` and `keys/` under the active config root: `CCW_CONFIG_DIR` if set, otherwise `${XDG_CONFIG_HOME:-~/.config}/ccw`. Newly created directories are private to your user. Pass an install destination to override `~/bin`, for example `./install.sh "$HOME/.local/bin"`. Add the chosen command directory to `PATH` if needed. You need `zsh` and the Claude Code CLI (`claude`) in your `PATH`.
 
 The aliases are created in the installation directory, not stored in the repository.
 
@@ -27,10 +27,16 @@ You can set `CCW_CLAUDE_BIN` to invoke a different Claude Code executable. The d
 
 ### 1. Create provider and key files
 
-```bash
-mkdir -p ~/.config/ccw/providers ~/.config/ccw/keys
+`./install.sh` creates the active config directories. If you have not run the installer, create them manually:
 
-cat > ~/.config/ccw/providers/my-provider.sh <<'EOF'
+```bash
+mkdir -p "${CCW_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/ccw}"/{providers,keys}
+```
+
+Then add provider and key files:
+
+```bash
+cat > "${CCW_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/ccw}/providers/my-provider.sh" <<'EOF'
 export ANTHROPIC_BASE_URL="https://api.example.com/anthropic"
 export ANTHROPIC_MODEL="my-model"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="my-model"
@@ -39,10 +45,10 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="my-fast-model"
 export ANTHROPIC_REASONING_MODEL="my-model"
 EOF
 
-cat > ~/.config/ccw/keys/my-key.sh <<'EOF'
+cat > "${CCW_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/ccw}/keys/my-key.sh" <<'EOF'
 export ANTHROPIC_API_KEY="sk-your-real-key-here"
 EOF
-chmod 600 ~/.config/ccw/keys/my-key.sh
+chmod 600 "${CCW_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/ccw}/keys/my-key.sh"
 ```
 
 Provider files define endpoint and model-tier mappings; key files hold credentials. Don't put real API keys in this repository.

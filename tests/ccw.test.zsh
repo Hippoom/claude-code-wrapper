@@ -149,10 +149,25 @@ assert_eq "$(cat "$TEST_ROOT/simple")" "1" "CCW_SIMPLE sets CLAUDE_CODE_SIMPLE"
 assert_eq "$child_exit_code" "23" "upstream exit status propagation"
 assert_eq "$(cat "$TEST_ROOT/called")" "$TEST_ROOT/bin/claude-custom" "CCW_CLAUDE_BIN override"
 
-# The installer creates aliases beside the installed launcher, not in the repository.
+# The installer creates aliases and private config directories outside the repository.
 INSTALL_DIR="$TEST_ROOT/install/bin"
+INSTALL_CONFIG="$TEST_ROOT/install/config/ccw"
 mkdir -p "$INSTALL_DIR"
-"$ROOT/install.sh" "$INSTALL_DIR" >/dev/null
+CCW_CONFIG_DIR="$INSTALL_CONFIG" "$ROOT/install.sh" "$INSTALL_DIR" >/dev/null
+[[ -d "$INSTALL_CONFIG/providers" && -d "$INSTALL_CONFIG/keys" ]] || fail "installer must create configured provider/key directories"
+assert_eq "$(stat -f '%Lp' "$INSTALL_CONFIG")" "700" "config root permissions"
+assert_eq "$(stat -f '%Lp' "$INSTALL_CONFIG/providers")" "700" "providers directory permissions"
+assert_eq "$(stat -f '%Lp' "$INSTALL_CONFIG/keys")" "700" "keys directory permissions"
+CUSTOM_XDG="$TEST_ROOT/custom-xdg"
+XDG_CONFIG_HOME="$CUSTOM_XDG" "$ROOT/install.sh" "$TEST_ROOT/xdg-bin" >/dev/null
+[[ -d "$CUSTOM_XDG/ccw/providers" && -d "$CUSTOM_XDG/ccw/keys" ]] || fail "installer must honor XDG_CONFIG_HOME"
+EXISTING_CONFIG="$TEST_ROOT/existing-config"
+mkdir -p "$EXISTING_CONFIG/providers" "$EXISTING_CONFIG/keys"
+chmod 755 "$EXISTING_CONFIG" "$EXISTING_CONFIG/providers" "$EXISTING_CONFIG/keys"
+CCW_CONFIG_DIR="$EXISTING_CONFIG" "$ROOT/install.sh" "$TEST_ROOT/existing-bin" >/dev/null
+assert_eq "$(stat -f '%Lp' "$EXISTING_CONFIG")" "755" "existing config root permissions unchanged"
+assert_eq "$(stat -f '%Lp' "$EXISTING_CONFIG/providers")" "755" "existing providers permissions unchanged"
+assert_eq "$(stat -f '%Lp' "$EXISTING_CONFIG/keys")" "755" "existing keys permissions unchanged"
 [[ ! -e "$ROOT/claude-wrapper" && ! -e "$ROOT/claude-code-wrapper" ]] || fail "aliases must not live in the repository"
 for alias in claude-wrapper claude-code-wrapper; do
   [[ -L "$INSTALL_DIR/$alias" ]] || fail "$alias must be an installed symlink"
