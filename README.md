@@ -150,6 +150,16 @@ CCW_SIMPLE=1 ccw --<provider>
 
 `--simple` makes CCW set `CLAUDE_CODE_SIMPLE=1` and is consumed by the wrapper; it is not passed to Claude Code. Without it, CCW clears inherited `CLAUDE_CODE_SIMPLE` to retain default full initialization. `--full-skills` and the old `CCLAUDE_FULL_SKILLS` setting are unsupported; full Skills already load by default.
 
+### Troubleshooting gateway connectivity
+
+If a gateway-backed session exits with a connectivity error before you can use `/status`, try one launch in Claude Code's minimal mode:
+
+```bash
+ccw --ds --bare
+```
+
+`--bare` is passed through to Claude Code. It skips OAuth and keychain credential reads and uses `ANTHROPIC_API_KEY` or `apiKeyHelper`; it also skips hooks, LSP, plugin sync, attribution, auto-memory, and background prefetches. Skills still resolve. If the gateway works in bare mode, retry without `--bare` (`ccw --ds`) for normal initialization. A difference points to normal-mode auth or initialization as the likely cause, but does not by itself identify which one. Bare mode is a diagnostic, not a recommended default. If both modes fail, check the resolved provider with `ccw --ds --which`, then investigate network reachability and whether the gateway accepts the configured credential.
+
 ### Key files
 
 A key file exports one upstream variable, for example:
